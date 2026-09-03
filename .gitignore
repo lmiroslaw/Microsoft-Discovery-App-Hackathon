@@ -1,0 +1,12 @@
+# Local config with real IDs - never commit
+config.sh
+
+# Generated credentials - never commit
+*credentials*.csv
+*credentials*.txt
+
+# Conditional Access policy backups (contain tenant policy detail)
+ca_policy_backups/
+
+# OS noise
+.DS_Store
