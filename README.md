@@ -19,6 +19,8 @@ committed — tenant-specific values live in a gitignored `config.sh`.
 | Golden image | `DiscoveryGallery / DiscoveryApp-W11 / 1.0.0` | Azure Compute Gallery, replicated to both regions |
 | Session hosts | `avd-hack-<n>` | `Standard_D8as_v5` (8 vCPU / 32 GiB), Entra ID joined |
 | Identity group | `HackathonUsers` | Holds **all** RBAC — new users just join the group |
+| Shared storage | `st<name>` / container `shared` | Blob storage for handing files to users — reachable **only** from the session hosts |
+| Private endpoints | `pe-blob-avd-primary` / `-secondary` | One per region; storage has no public network access |
 | Primary region | UK South | Lowest latency for London-based users |
 | Overflow region | Sweden Central | Used once UK South quota is exhausted |
 
@@ -30,6 +32,21 @@ group, never to individual users:
   and scoped at RG level so it automatically covers every future session host.
 
 Scaling from 5 to 60 users therefore needs **no new role assignments** — only group membership plus a VM.
+
+**Storage model — private by necessity.** Tenants with the usual secure-storage guardrails force
+`allowBlobPublicAccess=false`, `allowSharedKeyAccess=false` and `publicNetworkAccess=Disabled` on
+every new storage account, and silently ignore attempts to re-enable them. That rules out anonymous
+containers *and* account-key SAS, so the share is reached over a **private endpoint in each AVD
+VNet**, authenticated with Entra ID:
+
+- The two AVD VNets are **not peered**, so each gets its own private endpoint **and its own private
+  DNS zone**. A single zone linked to both VNets would resolve the storage FQDN to one region's
+  private IP for every VM — unreachable from the other region.
+- `Storage Blob Data Reader` on the storage account for `HackathonUsers`; `Storage Blob Data
+  Contributor` for the uploader group (`UPLOADER_GROUP_NAME`).
+
+The practical consequence: **file links work only from inside an AVD session**, never from a
+personal laptop.
 
 ### Users
 
@@ -203,6 +220,15 @@ done
 
 Every host should report `status=Available`.
 
+### Step 7 — Shared storage (optional)
+
+```bash
+./scripts/06-deploy-storage.sh
+```
+
+Creates the storage account, the container, a private endpoint plus private DNS zone in **each**
+region, and the RBAC. Set `STORAGE_ACCOUNT` to a globally unique name in `config.sh` first.
+
 ---
 
 ## 4. Scaling to 60 users
@@ -284,6 +310,46 @@ az vm list -g "$RG_PROD" --query "[].name" -o tsv \
 
 `Start VM on Connect` means deallocated hosts wake automatically when a user connects — safe to
 shut everything down between sessions.
+
+### Shared file storage — uploading and downloading
+
+Everything below runs **on a session host**. The storage account has no public network access, so
+none of it works from a laptop. Session hosts ship with the Azure CLI and Edge; they do **not**
+have AzCopy or Storage Explorer.
+
+**Upload** (members of `UPLOADER_GROUP_NAME`):
+
+```powershell
+az login
+az storage blob upload --account-name <storage-account> `
+  --container-name shared --name myfile.pdf --file C:\path\myfile.pdf `
+  --auth-mode login --overwrite
+```
+
+Or in Edge: **portal.azure.com → the storage account → Storage browser → `shared` → Upload**. The
+browser runs inside the VNet, so it reaches the private endpoint.
+
+**Download** (anyone in `HackathonUsers`):
+
+```powershell
+az login
+az storage blob download --account-name <storage-account> `
+  --container-name shared --name myfile.pdf --file C:\Users\Public\myfile.pdf --auth-mode login
+```
+
+**Handing someone a clickable link.** A bare blob URL returns **409** — anonymous access is
+disabled and browsers do not attach Entra tokens. Generate a **user-delegation SAS** instead
+(signed with your own Entra identity; account keys are disabled):
+
+```powershell
+az storage blob generate-sas --account-name <storage-account> `
+  --container-name shared --name myfile.pdf `
+  --permissions r --expiry 2026-01-31T18:00:00Z `
+  --auth-mode login --as-user --full-uri -o tsv
+```
+
+The resulting URL opens directly in a browser and expires on the date given. It still resolves
+only inside the AVD VNets — emailing it to an external address will not work.
 
 ---
 
@@ -443,6 +509,7 @@ scripts/
   03-provision-session-hosts.sh       NICs, VMs, extensions  [start] [end] [region]
   04-assign-session-hosts.sh          Pin a user to a VM  [user] [vm-suffix]
   05-verify.sh                        Health check
+  06-deploy-storage.sh                Shared blob storage + private endpoints + RBAC
   ca_policy_toggle.ps1                Conditional Access toggle (read + write)
   ca_policy_toggle.py                 Conditional Access listing (read-only)
 ```

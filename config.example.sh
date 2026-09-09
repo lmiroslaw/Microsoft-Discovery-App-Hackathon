@@ -40,3 +40,17 @@ export SUBNET_PRIMARY="avdsubnet"
 export REGION_SECONDARY="swedencentral"
 export VNET_SECONDARY="vn-avd-hackathon-swc"
 export SUBNET_SECONDARY="avdsubnet"
+# ---- Shared file storage ---------------------------------------------------
+# Storage account names are GLOBALLY unique across Azure: 3-24 chars, lowercase
+# letters and digits only. Change this before the first run.
+export STORAGE_ACCOUNT="sthackathonchangeme"
+export STORAGE_CONTAINER="shared"
+
+# Each region needs its own private DNS zone, and a zone name can exist only
+# once per resource group - so the secondary zone gets a resource group of its
+# own. See scripts/06-deploy-storage.sh.
+export RG_DNS_SECONDARY="hackathon-dns-secondary"
+
+# Group granted upload (write) access to the share. Everyone in GROUP_NAME gets
+# read access. Leave empty to make the share read-only for all users.
+export UPLOADER_GROUP_NAME=""
